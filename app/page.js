@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, Clock, DollarSign } from 'lucide-react';
+import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, DollarSign } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import AuthModal from '@/components/AuthModal';
 import BarcodeScanner from '@/components/BarcodeScanner';
@@ -10,14 +10,15 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState('inicio'); // 'inicio', 'supermercado', 'listaDistinta', 'favoritos', 'cuadricula', 'agregar', 'reportes', 'gastos'
+  const [activeTab, setActiveTab] = useState('inicio'); 
   const [busqueda, setBusqueda] = useState('');
   const [productos, setProductos] = useState([]);
   const [codigoDespensa, setCodigoDespensa] = useState('CASA-123');
   const [mostrarEscaner, setMostrarEscaner] = useState(false);
   const [modoEscaner, setModoEscaner] = useState('buscar');
 
-  const [mostrarAuthModal, setMostrarAuthModal] = useState(false);
+  // Autenticación obligatoria inicializada en true hasta verificar sesión
+  const [mostrarAuthModal, setMostrarAuthModal] = useState(true);
   const [mostrarMenuDesplegable, setMostrarMenuDesplegable] = useState(false);
 
   // Modo Oscuro
@@ -43,14 +44,22 @@ export default function HomePage() {
   const [nuevoCantidadDistinto, setNuevoCantidadDistinto] = useState('1');
   const [nuevoPrecioDistinto, setNuevoPrecioDistinto] = useState('');
 
-  // Mantener sesión abierta
+  // 1. PERSISTENCIA Y GESTIÓN DE SESIÓN
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) setMostrarAuthModal(true);
+      if (session) {
+        setMostrarAuthModal(false);
+      } else {
+        setMostrarAuthModal(true);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setMostrarAuthModal(!session);
+      if (session) {
+        setMostrarAuthModal(false);
+      } else {
+        setMostrarAuthModal(true);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -89,16 +98,15 @@ export default function HomePage() {
     }
   }, [productos]);
 
-  // Cálculo de estado de vencimiento
   const calcularEstadoVencimiento = (fechaStr) => {
     if (!fechaStr) return 'normal';
     const hoy = new Date();
     const venc = new Date(fechaStr);
     const diffDias = Math.ceil((venc - hoy) / (1000 * 60 * 60 * 24));
 
-    if (diffDias < 0) return 'vencido'; // Rojo
-    if (diffDias <= 7) return 'proximo'; // Amarillo
-    return 'normal'; // Verde / Normal
+    if (diffDias < 0) return 'vencido';
+    if (diffDias <= 7) return 'proximo';
+    return 'normal';
   };
 
   const handleGuardarProducto = async (e) => {
@@ -195,7 +203,17 @@ export default function HomePage() {
 
   return (
     <main className={`w-full min-h-screen pb-32 pt-4 px-3 flex flex-col font-sans transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-[#f5e8d9] text-[#3f5228]'}`}>
-      {mostrarAuthModal && <AuthModal onLoginSuccess={(code) => { setCodigoDespensa(code); setMostrarAuthModal(false); }} />}
+      
+      {/* MODAL DE AUTENTICACIÓN Y CÓDIGO DE DESPENSA */}
+      {mostrarAuthModal && (
+        <AuthModal 
+          onLoginSuccess={(codigoAsignado) => {
+            if (codigoAsignado) setCodigoDespensa(codigoAsignado);
+            setMostrarAuthModal(false);
+          }} 
+        />
+      )}
+
       {mostrarEscaner && <BarcodeScanner onScanSuccess={(code) => { setCodigoBarras(code); setMostrarEscaner(false); setActiveTab('agregar'); }} onClose={() => setMostrarEscaner(false)} />}
 
       {/* Encabezado */}
@@ -218,6 +236,7 @@ export default function HomePage() {
           </div>
         )}
 
+        {/* Código de Despensa Editable y Compartible */}
         <div className="text-center flex flex-col items-center">
           <div className="flex items-center gap-1">
             <span className="font-bold text-xs">Despensa: </span>
@@ -226,11 +245,10 @@ export default function HomePage() {
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Botón de Modo Oscuro */}
           <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-yellow-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`} title="Cambiar Tema">
             {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
-          <button onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`Únete a nuestra despensa con el código: *${codigoDespensa}*`)}`, '_blank')} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-green-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`}>
+          <button onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`¡Únete a nuestra despensa compartida en la app! Ingresa con este código: *${codigoDespensa}*`)}`, '_blank')} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-green-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`} title="Compartir por WhatsApp">
             <Share2 className="w-5 h-5" />
           </button>
         </div>
