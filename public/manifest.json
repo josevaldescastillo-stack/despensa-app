@@ -1,0 +1,22 @@
+{
+  "name": "Despensa - Gestión Compartida",
+  "short_name": "Despensa",
+  "description": "Aplicación colaborativa para control de inventario de la despensa",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5e8d9",
+  "theme_color": "#3f5228",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3724/3724788.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3724/3724788.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
