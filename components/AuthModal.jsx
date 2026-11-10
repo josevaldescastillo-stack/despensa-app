@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { LogIn, UserPlus, Home, PlusCircle } from 'lucide-react';
 
@@ -16,6 +16,16 @@ export default function AuthModal({ onLoginSuccess }) {
   const [nombreDespensa, setNombreDespensa] = useState('');
   const [codigoUnirse, setCodigoUnirse] = useState('');
 
+  // Verificar si ya hay una sesión activa al abrir el modal
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setSession(session);
+        verificarDespensaUsuario(session.user.id);
+      }
+    });
+  }, []);
+
   // 1. Manejo de Autenticación
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -23,17 +33,24 @@ export default function AuthModal({ onLoginSuccess }) {
     
     if (isRegister) {
       const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) alert('Error al registrarte: ' + error.message);
-      else {
+      if (error) {
+        alert('Error al registrarte: ' + error.message);
+      } else {
         alert('¡Cuenta creada con éxito!');
-        setSession(data.session);
+        if (data.session) {
+          setSession(data.session);
+          setModoDespensa('menu');
+        } else {
+          alert('Por favor, revisa tu correo si requiere confirmación o inicia sesión.');
+        }
       }
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) alert('Error al iniciar sesión: ' + error.message);
-      else {
+      if (error) {
+        alert('Error al iniciar sesión: ' + error.message);
+      } else if (data.session) {
         setSession(data.session);
-        verificarDespensaUsuario(data.session.user.id);
+        await verificarDespensaUsuario(data.session.user.id);
       }
     }
     setLoading(false);
@@ -41,14 +58,18 @@ export default function AuthModal({ onLoginSuccess }) {
 
   // 2. Verificar si el usuario ya tiene despensa asignada
   const verificarDespensaUsuario = async (userId) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('despensa_miembros')
       .select('despensas(codigo)')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (data?.despensas?.codigo) {
+      // Si ya tiene despensa, entra directo con su código personal
       onLoginSuccess(data.despensas.codigo);
+    } else {
+      // Si no tiene despensa, lo mandamos a la pantalla de crear o unirse
+      setModoDespensa('menu');
     }
   };
 
@@ -80,6 +101,8 @@ export default function AuthModal({ onLoginSuccess }) {
     if (!errMiembro) {
       alert(`¡Despensa creada! Tu código es: ${nuevoCodigo}`);
       onLoginSuccess(nuevoCodigo);
+    } else {
+      alert('Error al asociar el usuario a la despensa: ' + errMiembro.message);
     }
   };
 
@@ -93,7 +116,7 @@ export default function AuthModal({ onLoginSuccess }) {
       .from('despensas')
       .select('id, codigo')
       .eq('codigo', codigoUnirse.trim().toUpperCase())
-      .single();
+      .maybeSingle();
 
     if (errBuscar || !despensa) {
       alert('No se encontró ninguna despensa con ese código.');
@@ -106,11 +129,11 @@ export default function AuthModal({ onLoginSuccess }) {
       .insert([{ despensa_id: despensa.id, user_id: session.user.id }]);
 
     setLoading(false);
-    if (!errUnir) {
+    if (!errUnir || errUnir.code === '23505') { // 23505 es duplicado si ya es miembro
       alert('¡Te has unido con éxito a la despensa!');
       onLoginSuccess(despensa.codigo);
     } else {
-      alert('Ya perteneces a esta despensa o hubo un error.');
+      alert('Hubo un error al unirte a la despensa: ' + errUnir.message);
     }
   };
 
@@ -132,7 +155,7 @@ export default function AuthModal({ onLoginSuccess }) {
                 placeholder="Correo electrónico" 
                 value={email} 
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#3f5228] bg-white"
+                className="w-full border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#3f5228] bg-white text-black"
                 required
               />
               <input 
@@ -140,7 +163,7 @@ export default function AuthModal({ onLoginSuccess }) {
                 placeholder="Contraseña" 
                 value={password} 
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#3f5228] bg-white"
+                className="w-full border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#3f5228] bg-white text-black"
                 required
               />
               <button 
@@ -192,7 +215,7 @@ export default function AuthModal({ onLoginSuccess }) {
                   placeholder="Ej. Casa Familia Pérez" 
                   value={nombreDespensa} 
                   onChange={(e) => setNombreDespensa(e.target.value)}
-                  className="w-full border rounded-xl p-3 text-sm outline-none bg-white"
+                  className="w-full border rounded-xl p-3 text-sm outline-none bg-white text-black"
                   required
                 />
                 <button 
@@ -214,7 +237,7 @@ export default function AuthModal({ onLoginSuccess }) {
                   placeholder="Ej. DESP-4921" 
                   value={codigoUnirse} 
                   onChange={(e) => setCodigoUnirse(e.target.value)}
-                  className="w-full border rounded-xl p-3 text-sm outline-none uppercase bg-white text-center font-bold tracking-widest"
+                  className="w-full border rounded-xl p-3 text-sm outline-none uppercase bg-white text-black text-center font-bold tracking-widest"
                   required
                 />
                 <button 
