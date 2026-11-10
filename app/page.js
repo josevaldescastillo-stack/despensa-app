@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus } from 'lucide-react';
+import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import AuthModal from '@/components/AuthModal';
 import BarcodeScanner from '@/components/BarcodeScanner';
@@ -10,32 +10,51 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState('inicio');
+  const [activeTab, setActiveTab] = useState('inicio'); // 'inicio' (inventario tarjetas), 'supermercado', 'favoritos', 'cuadricula', 'agregar'
   const [busqueda, setBusqueda] = useState('');
   const [productos, setProductos] = useState([]);
   const [codigoDespensa, setCodigoDespensa] = useState('CASA-123');
   const [mostrarEscaner, setMostrarEscaner] = useState(false);
-  const [modoEscaner, setModoEscaner] = useState('buscar'); // 'buscar', 'agregar', 'vincular'
+  const [modoEscaner, setModoEscaner] = useState('buscar');
 
-  const [mostrarAuthModal, setMostrarAuthModal] = useState(true);
+  const [mostrarAuthModal, setMostrarAuthModal] = useState(false);
   const [mostrarMenuDesplegable, setMostrarMenuDesplegable] = useState(false);
 
-  // Estados para Edición y Formulario
+  // Formulario & Edición
   const [editandoId, setEditandoId] = useState(null);
   const [nombre, setNombre] = useState('');
   const [unidad, setUnidad] = useState('Kg');
   const [cantidad, setCantidad] = useState('');
   const [min, setMin] = useState('');
+  const [stockDeseado, setStockDeseado] = useState('');
   const [precio, setPrecio] = useState('');
   const [vencimiento, setVencimiento] = useState('');
   const [codigoBarras, setCodigoBarras] = useState('');
 
-  // Lista de Supermercado
+  // Lista de Supermercado interactiva
   const [listaCompras, setListaCompras] = useState([]);
-  const [nuevoItemSuper, setNuevoItemSuper] = useState('');
+
+  // Mantener sesión abierta
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        setMostrarAuthModal(true);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        setMostrarAuthModal(true);
+      } else {
+        setMostrarAuthModal(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
-    fetchProductos();
+    if (codigoDespensa) fetchProductos();
   }, [codigoDespensa]);
 
   const fetchProductos = async () => {
@@ -44,8 +63,35 @@ export default function HomePage() {
       .select('*')
       .eq('despensa_codigo', codigoDespensa);
 
-    if (!error) setProductos(data || []);
+    if (!error) {
+      setProductos(data || []);
+    }
   };
+
+  // Generar automáticamente la lista de supermercado con lo que falta para llegar al stock deseado
+  const generarListaSupermercadoAutomatica = (listaActualProductos) => {
+    const lista = listaActualProductos
+      .filter((p) => p.cantidad < (p.stock_deseado || p.min || 1))
+      .map((p) => {
+        const deseado = p.stock_deseado || p.min || 1;
+        const faltante = deseado - p.cantidad;
+        return {
+          id: p.id,
+          nombre: p.nombre,
+          precio: p.precio || 0,
+          cantidadComprar: faltante > 0 ? faltante : 1,
+          unidad: p.unidad,
+          comprado: false,
+        };
+      });
+    setListaCompras(lista);
+  };
+
+  useEffect(() => {
+    if (productos.length > 0) {
+      generarListaSupermercadoAutomatica(productos);
+    }
+  }, [productos]);
 
   const handleGuardarProducto = async (e) => {
     e.preventDefault();
@@ -55,7 +101,8 @@ export default function HomePage() {
       nombre,
       unidad,
       cantidad: parseFloat(cantidad),
-      min: parseFloat(min || 0),
+      min: parseFloat(min || 1),
+      stock_deseado: parseFloat(stockDeseado || min || cantidad),
       precio: parseFloat(precio),
       vencimiento: vencimiento || null,
       codigo_barras: codigoBarras || null,
@@ -64,10 +111,10 @@ export default function HomePage() {
 
     if (editandoId) {
       const { error } = await supabase.from('productos').update(productoData).eq('id', editandoId);
-      if (!error) alert('¡Producto actualizado con éxito!');
+      if (!error) alert('¡Producto actualizado!');
     } else {
       const { error } = await supabase.from('productos').insert([productoData]);
-      if (!error) alert('¡Producto agregado con éxito!');
+      if (!error) alert('¡Producto agregado!');
     }
 
     limpiarFormulario();
@@ -81,6 +128,7 @@ export default function HomePage() {
     setUnidad(prod.unidad);
     setCantidad(prod.cantidad);
     setMin(prod.min);
+    setStockDeseado(prod.stock_deseado || '');
     setPrecio(prod.precio);
     setVencimiento(prod.vencimiento || '');
     setCodigoBarras(prod.codigo_barras || '');
@@ -92,6 +140,7 @@ export default function HomePage() {
     setNombre('');
     setCantidad('');
     setMin('');
+    setStockDeseado('');
     setPrecio('');
     setVencimiento('');
     setCodigoBarras('');
@@ -103,58 +152,41 @@ export default function HomePage() {
     if (!error) fetchProductos();
   };
 
+  const toggleFavorito = async (prod) => {
+    const nuevoFav = !prod.favorito;
+    const { error } = await supabase.from('productos').update({ favorito: nuevoFav }).eq('id', prod.id);
+    if (!error) fetchProductos();
+  };
+
   const handleEliminar = async (id) => {
-    if (!confirm('¿Seguro que deseas eliminar este producto?')) return;
+    if (!confirm('¿Eliminar producto?')) return;
     const { error } = await supabase.from('productos').delete().eq('id', id);
     if (!error) fetchProductos();
   };
 
-  const handleCodigoEscaneado = async (codigo) => {
+  const handleCodigoEscaneado = (codigo) => {
     setMostrarEscaner(false);
-
     if (modoEscaner === 'buscar') {
       const encontrado = productos.find((p) => p.codigo_barras === codigo);
       if (encontrado) {
-        const accion = confirm(`Producto encontrado: "${encontrado.nombre}" (Stock: ${encontrado.cantidad}). ¿Deseas descontar 1 unidad?`);
+        const accion = confirm(`Encontrado: "${encontrado.nombre}". ¿Deseas descontar 1 unidad?`);
         if (accion) {
           cambiarStock(encontrado.id, encontrado.cantidad, -1);
         } else {
           setBusqueda(encontrado.nombre);
         }
       } else {
-        alert(`Código ${codigo} no vinculado. Puedes vincularlo al agregar o editar un producto.`);
+        alert(`Código ${codigo} no registrado. Asócialo a un nuevo producto.`);
         setCodigoBarras(codigo);
         setActiveTab('agregar');
       }
     } else if (modoEscaner === 'vincular') {
       setCodigoBarras(codigo);
+      setActiveTab('agregar');
     }
   };
 
-  // Lista de Supermercado
-  const agregarItemSupermercado = () => {
-    if (!nuevoItemSuper.trim()) return;
-    setListaCompras((prev) => [
-      ...prev,
-      { id: Date.now(), nombre: nuevoItemSuper, precio: 0, comprado: false, cantidad: 1 },
-    ]);
-    setNuevoItemSuper('');
-  };
-
-  const generarListaSuper = () => {
-    const productosLista = productos.map((p) => ({
-      id: p.id,
-      nombre: p.nombre,
-      precio: p.precio || 0,
-      comprado: false,
-      cantidad: 1,
-    }));
-    setListaCompras(productosLista);
-    setActiveTab('supermercado');
-    setMostrarMenuDesplegable(false);
-  };
-
-  const toggleComprado = (id) => {
+  const toggleCompradoSuper = (id) => {
     setListaCompras((prev) => {
       const actualizada = prev.map((item) =>
         item.id === id ? { ...item, comprado: !item.comprado } : item
@@ -163,8 +195,8 @@ export default function HomePage() {
     });
   };
 
-  const totalEstimado = listaCompras.reduce(
-    (acc, item) => acc + (item.comprado ? 0 : item.precio * item.cantidad),
+  const totalEstimadoSuper = listaCompras.reduce(
+    (acc, item) => acc + (item.comprado ? 0 : item.precio * item.cantidadComprar),
     0
   );
 
@@ -173,7 +205,7 @@ export default function HomePage() {
   );
 
   return (
-    <main className="min-h-screen bg-despensa-bg pb-28 pt-4 px-4 max-w-md mx-auto relative shadow-2xl rounded-3xl overflow-hidden font-sans">
+    <main className="w-full min-h-screen bg-despensa-bg pb-32 pt-4 px-3 flex flex-col font-sans">
       {mostrarAuthModal && (
         <AuthModal
           onLoginSuccess={(codigoAsignado) => {
@@ -191,7 +223,7 @@ export default function HomePage() {
       )}
 
       {/* Encabezado */}
-      <header className="flex justify-between items-center mb-4 px-2 relative">
+      <header className="flex justify-between items-center mb-4 px-1 relative">
         <button
           onClick={() => setMostrarMenuDesplegable(!mostrarMenuDesplegable)}
           className="p-2 text-despensa-primary hover:bg-black/5 rounded-full"
@@ -200,18 +232,12 @@ export default function HomePage() {
         </button>
 
         {mostrarMenuDesplegable && (
-          <div className="absolute top-12 left-2 bg-white rounded-2xl shadow-xl border border-despensa-primary/20 p-2 z-50 w-56 space-y-1">
+          <div className="absolute top-12 left-0 bg-white rounded-2xl shadow-xl border border-despensa-primary/20 p-2 z-50 w-56 space-y-1">
             <button
-              onClick={() => { setActiveTab('supermercado'); setMostrarMenuDesplegable(false); }}
+              onClick={() => { setActiveTab('reportes'); setMostrarMenuDesplegable(false); }}
               className="w-full text-left px-3 py-2 text-xs font-bold text-despensa-text hover:bg-despensa-bg rounded-xl flex items-center gap-2"
             >
-              <ShoppingCart className="w-4 h-4 text-despensa-primary" /> Lista de Supermercado
-            </button>
-            <button
-              onClick={generarListaSuper}
-              className="w-full text-left px-3 py-2 text-xs text-despensa-subtext hover:bg-despensa-bg rounded-xl flex items-center gap-2 pl-7"
-            >
-              ↻ Cargar desde Inventario
+              <FileText className="w-4 h-4 text-despensa-primary" /> Reportes PDF
             </button>
           </div>
         )}
@@ -227,8 +253,16 @@ export default function HomePage() {
             />
           </div>
         </div>
-        <button className="p-2 text-despensa-primary hover:bg-black/5 rounded-full border border-despensa-primary/30">
-          <User className="w-6 h-6" />
+
+        <button 
+          onClick={() => {
+            const mensaje = encodeURIComponent(`Únete a nuestra despensa compartida con el código: *${codigoDespensa}*`);
+            window.open(`https://api.whatsapp.com/send?text=${mensaje}`, '_blank');
+          }}
+          className="p-2 text-despensa-primary hover:bg-black/5 rounded-full border border-despensa-primary/30"
+          title="Compartir por WhatsApp"
+        >
+          <Share2 className="w-5 h-5" />
         </button>
       </header>
 
@@ -248,40 +282,56 @@ export default function HomePage() {
           <button
             onClick={() => { setModoEscaner('buscar'); setMostrarEscaner(true); }}
             className="bg-despensa-primary text-white p-2.5 rounded-full shadow-sm hover:opacity-90 transition flex items-center justify-center"
-            title="Escanear Código / Restar Stock"
+            title="Escanear Código de Barras"
           >
             <Camera className="w-5 h-5" />
           </button>
         </div>
       )}
 
-      {/* VISTA INICIO: Lista de Inventario */}
+      {/* Título de Pestaña */}
+      <div className="text-center mb-3">
+        <h1 className="text-lg font-bold text-despensa-text">
+          {activeTab === 'inicio' && 'Inventario General'}
+          {activeTab === 'supermercado' && 'Lista de Supermercado'}
+          {activeTab === 'favoritos' && 'Productos Favoritos'}
+          {activeTab === 'cuadricula' && 'Vista de Cuadrícula'}
+          {activeTab === 'agregar' && (editandoId ? 'Editar Producto' : 'Nuevo Producto')}
+          {activeTab === 'reportes' && 'Reportes Financieros'}
+        </h1>
+      </div>
+
+      {/* VISTA 1: INICIO (Lista completa detallada) */}
       {activeTab === 'inicio' && (
-        <div className="space-y-3 mb-6">
+        <div className="space-y-3 flex-1">
           {productosFiltrados.length === 0 ? (
-            <p className="text-center text-despensa-subtext text-sm py-10">No hay productos guardados.</p>
+            <p className="text-center text-despensa-subtext text-sm py-10">No hay productos en esta despensa.</p>
           ) : (
             productosFiltrados.map((prod) => {
-              const esCritico = prod.cantidad <= prod.min;
+              const esCritico = prod.cantidad <= (prod.min || 1);
               return (
                 <div
                   key={prod.id}
-                  className={`rounded-2xl p-4 flex items-center justify-between shadow-sm relative border ${
+                  className={`rounded-2xl p-4 flex items-center justify-between shadow-sm border ${
                     esCritico ? 'bg-red-50 border-red-200' : 'bg-despensa-card border-transparent'
                   }`}
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
+                      <button onClick={() => toggleFavorito(prod)}>
+                        <Star className={`w-4 h-4 ${prod.favorito ? 'text-yellow-500 fill-yellow-500' : 'text-gray-300'}`} />
+                      </button>
                       <h3 className="font-bold text-despensa-text text-base">{prod.nombre}</h3>
                       {esCritico && (
-                        <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" /> Stock Bajo
+                        <span className="bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> Bajo Stock
                         </span>
                       )}
                     </div>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Deseado: {prod.stock_deseado || prod.min || 1} {prod.unidad}</p>
 
                     <div className="flex items-center gap-3 pt-2">
-                      <div className="flex items-center bg-white/80 rounded-lg border p-1 gap-2">
+                      <div className="flex items-center bg-white/90 rounded-lg border p-1 gap-2">
                         <button
                           onClick={() => cambiarStock(prod.id, prod.cantidad, -1)}
                           className="p-1 hover:bg-gray-100 rounded text-red-600 font-bold"
@@ -299,7 +349,7 @@ export default function HomePage() {
                         </button>
                       </div>
 
-                      <span className="text-base font-extrabold text-despensa-text">
+                      <span className="text-sm font-extrabold text-despensa-text">
                         ${prod.precio?.toLocaleString('es-CL')}
                       </span>
                     </div>
@@ -308,13 +358,13 @@ export default function HomePage() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => prepararEdicion(prod)}
-                      className="p-2 text-despensa-primary hover:bg-black/5 rounded-full transition"
+                      className="p-2 text-despensa-primary hover:bg-black/5 rounded-full"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleEliminar(prod.id)}
-                      className="p-2 text-red-500 hover:bg-red-100 rounded-full transition"
+                      className="p-2 text-red-500 hover:bg-red-100 rounded-full"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -326,13 +376,114 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* VISTA AGREGAR / EDITAR */}
-      {activeTab === 'agregar' && (
-        <form onSubmit={handleGuardarProducto} className="bg-white p-5 rounded-3xl shadow-sm space-y-3 border border-despensa-primary/20">
-          <h2 className="font-bold text-base text-despensa-text mb-2">
-            {editandoId ? 'Editar Producto' : 'Nuevo Producto'}
-          </h2>
+      {/* VISTA 2: SUPERMERCADO (Automática por stock faltante) */}
+      {activeTab === 'supermercado' && (
+        <div className="space-y-4 flex-1">
+          <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-despensa-primary/20">
+            <div>
+              <h2 className="text-sm font-bold text-despensa-text">Faltantes para Stock Deseado</h2>
+              <p className="text-xs text-despensa-subtext">
+                {listaCompras.filter((i) => i.comprado).length} de {listaCompras.length} comprados
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] text-gray-500 block uppercase font-bold">Total Estimado</span>
+              <span className="text-base font-extrabold text-[#d8492e]">${totalEstimadoSuper.toLocaleString('es-CL')}</span>
+            </div>
+          </div>
 
+          <div className="space-y-2">
+            {listaCompras.length === 0 ? (
+              <p className="text-center text-despensa-subtext text-sm py-10">
+                ¡Estás al día! No hay productos por debajo de tu stock deseado.
+              </p>
+            ) : (
+              listaCompras.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => toggleCompradoSuper(item.id)}
+                  className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition border ${
+                    item.comprado
+                      ? 'bg-gray-100/80 border-gray-200 text-gray-400 line-through'
+                      : 'bg-white border-despensa-primary/10 text-despensa-text shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-5 h-5 rounded flex items-center justify-center border ${item.comprado ? 'bg-despensa-primary border-despensa-primary text-white' : 'border-gray-400'}`}>
+                      {item.comprado && <Check className="w-3.5 h-3.5" />}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-sm block">{item.nombre}</span>
+                      <span className="text-xs text-gray-500">Comprar: {item.cantidadComprar} {item.unidad}</span>
+                    </div>
+                  </div>
+                  <span className="text-sm font-extrabold text-[#d8492e]">
+                    ${(item.precio * item.cantidadComprar).toLocaleString('es-CL')}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VISTA 3: FAVORITOS */}
+      {activeTab === 'favoritos' && (
+        <div className="space-y-3 flex-1">
+          {productos.filter(p => p.favorito).length === 0 ? (
+            <p className="text-center text-despensa-subtext text-sm py-10">No tienes productos marcados como favoritos. Toca la estrella en el inventario.</p>
+          ) : (
+            productos.filter(p => p.favorito).map((prod) => (
+              <div key={prod.id} className="bg-white rounded-2xl p-4 flex items-center justify-between shadow-sm border border-yellow-200">
+                <div className="flex items-center gap-3">
+                  <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
+                  <div>
+                    <h3 className="font-bold text-despensa-text">{prod.nombre}</h3>
+                    <p className="text-xs text-gray-500">Stock: {prod.cantidad} {prod.unidad}</p>
+                  </div>
+                </div>
+                <button onClick={() => prepararEdicion(prod)} className="p-2 text-despensa-primary">
+                  <Edit2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* VISTA 4: CUADRÍCULA (Iconos/Tarjetas visuales) */}
+      {activeTab === 'cuadricula' && (
+        <div className="grid grid-cols-2 gap-3 flex-1">
+          {productos.length === 0 ? (
+            <p className="col-span-2 text-center text-despensa-subtext text-sm py-10">No hay productos para mostrar.</p>
+          ) : (
+            productos.map((prod) => (
+              <div key={prod.id} className="bg-white rounded-2xl p-3 shadow-sm border border-despensa-primary/10 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start">
+                    <span className="bg-despensa-bg text-despensa-primary text-[10px] font-bold px-2 py-0.5 rounded-full">{prod.unidad}</span>
+                    <button onClick={() => toggleFavorito(prod)}>
+                      <Star className={`w-4 h-4 ${prod.favorito ? 'text-yellow-500 fill-yellow-500' : 'text-gray-300'}`} />
+                    </button>
+                  </div>
+                  <h3 className="font-bold text-despensa-text text-sm mt-2 line-clamp-1">{prod.nombre}</h3>
+                  <p className="text-xs text-gray-500 mt-1">Stock: <b>{prod.cantidad}</b></p>
+                </div>
+                <div className="mt-3 flex justify-between items-center pt-2 border-t">
+                  <span className="text-xs font-extrabold text-despensa-text">${prod.precio?.toLocaleString('es-CL')}</span>
+                  <button onClick={() => prepararEdicion(prod)} className="p-1 text-despensa-primary">
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* VISTA 5: AGREGAR / EDITAR PRODUCTO */}
+      {activeTab === 'agregar' && (
+        <form onSubmit={handleGuardarProducto} className="bg-white p-5 rounded-3xl shadow-sm space-y-3 border border-despensa-primary/20 flex-1">
           <div>
             <label className="text-xs font-bold text-despensa-text">Nombre del Producto</label>
             <input
@@ -347,7 +498,7 @@ export default function HomePage() {
 
           <div>
             <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-bold text-despensa-text">Código de Barra Vinculado</label>
+              <label className="text-xs font-bold text-despensa-text">Código de Barras</label>
               <button
                 type="button"
                 onClick={() => { setModoEscaner('vincular'); setMostrarEscaner(true); }}
@@ -358,7 +509,7 @@ export default function HomePage() {
             </div>
             <input
               type="text"
-              placeholder="Escanea o escribe el código"
+              placeholder="Código detectado"
               value={codigoBarras}
               onChange={(e) => setCodigoBarras(e.target.value)}
               className="w-full border rounded-xl p-2 text-xs bg-gray-50 outline-none"
@@ -394,17 +545,18 @@ export default function HomePage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-bold text-despensa-text">Stock Mínimo</label>
+              <label className="text-xs font-bold text-despensa-text">Stock Deseado (Ideal)</label>
               <input
                 type="number"
                 step="any"
-                value={min}
-                onChange={(e) => setMin(e.target.value)}
+                placeholder="Ej. 5"
+                value={stockDeseado}
+                onChange={(e) => setStockDeseado(e.target.value)}
                 className="w-full border rounded-xl p-2.5 text-sm mt-1 outline-none"
               />
             </div>
             <div>
-              <label className="text-xs font-bold text-despensa-text">Precio ($)</label>
+              <label className="text-xs font-bold text-despensa-text">Precio Unitario ($)</label>
               <input
                 type="number"
                 value={precio}
@@ -415,7 +567,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="flex gap-2 pt-2">
+          <div className="flex gap-2 pt-3">
             {editandoId && (
               <button
                 type="button"
@@ -429,91 +581,74 @@ export default function HomePage() {
               type="submit"
               className="flex-1 bg-despensa-primary text-white font-bold py-3 rounded-full shadow-md text-sm"
             >
-              {editandoId ? 'Guardar Cambios' : 'Crear Producto'}
+              {editandoId ? 'Actualizar Producto' : 'Guardar Producto'}
             </button>
           </div>
         </form>
       )}
 
-      {/* VISTA SUPERMERCADO */}
-      {activeTab === 'supermercado' && (
-        <div className="space-y-4 pb-10">
-          <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-despensa-primary/20">
-            <div>
-              <h2 className="text-sm font-bold text-despensa-text">Lista de Supermercado</h2>
-              <p className="text-xs text-despensa-subtext">
-                {listaCompras.filter((i) => i.comprado).length} de {listaCompras.length} comprados
-              </p>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] text-gray-500 block uppercase font-bold">Total Estimado</span>
-              <span className="text-base font-extrabold text-[#d8492e]">${totalEstimado.toLocaleString('es-CL')}</span>
-            </div>
-          </div>
-
-          {/* Input para agregar producto a la lista manualmente */}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Agregar a la lista de compras..."
-              value={nuevoItemSuper}
-              onChange={(e) => setNuevoItemSuper(e.target.value)}
-              className="flex-1 bg-white border border-despensa-primary/30 rounded-xl px-3 py-2 text-sm outline-none"
-            />
-            <button
-              onClick={agregarItemSupermercado}
-              className="bg-despensa-primary text-white px-4 rounded-xl font-bold text-sm"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {listaCompras.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => toggleComprado(item.id)}
-                className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition border ${
-                  item.comprado
-                    ? 'bg-gray-100/80 border-gray-200 text-gray-400 line-through'
-                    : 'bg-white border-despensa-primary/10 text-despensa-text shadow-sm'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded flex items-center justify-center border ${item.comprado ? 'bg-despensa-primary border-despensa-primary text-white' : 'border-gray-400'}`}>
-                    {item.comprado && <Check className="w-3.5 h-3.5" />}
-                  </div>
-                  <span className="font-semibold text-sm">{item.nombre}</span>
-                </div>
-                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-xs font-medium text-despensa-subtext">$</span>
-                  <input
-                    type="number"
-                    value={item.precio}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setListaCompras((prev) =>
-                        prev.map((i) => (i.id === item.id ? { ...i, precio: val } : i))
-                      );
-                    }}
-                    className="w-20 p-1 text-right text-xs border rounded-lg bg-gray-50 outline-none focus:ring-1 focus:ring-despensa-primary"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* VISTA 6: REPORTES */}
+      {activeTab === 'reportes' && (
+        <div className="bg-white p-6 rounded-3xl shadow-sm text-center space-y-4 border border-despensa-primary/25 flex-1">
+          <FileText className="w-16 h-16 text-despensa-primary mx-auto" />
+          <h2 className="font-bold text-despensa-text text-lg">Reporte de Inventario</h2>
+          <p className="text-xs text-despensa-subtext">Descarga el reporte detallado con costos y stock actual.</p>
+          <button 
+            onClick={() => {
+              const doc = new jsPDF();
+              doc.text(`Reporte Despensa: ${codigoDespensa}`, 14, 20);
+              const data = productos.map(p => [p.nombre, `${p.cantidad} ${p.unidad}`, `$${p.precio}`]);
+              doc.autoTable({ startY: 30, head: [['Producto', 'Stock', 'Precio']], body: data });
+              doc.save(`reporte-${codigoDespensa}.pdf`);
+            }}
+            className="w-full bg-despensa-primary text-white font-bold py-3 rounded-full shadow-md text-sm"
+          >
+            Descargar PDF
+          </button>
         </div>
       )}
 
-      {/* Botón Flotante */}
-      <button
-        onClick={() => { limpiarFormulario(); setActiveTab('agregar'); }}
-        className="fixed bottom-24 right-6 bg-despensa-primary text-white p-4 rounded-full shadow-2xl hover:opacity-90 transition flex items-center justify-center z-40"
-      >
-        <Plus className="w-6 h-6" />
-      </button>
+      {/* Menú de Navegación Inferior Actualizado */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 py-3 px-6 flex justify-around items-center z-40 max-w-md mx-auto shadow-lg">
+        <button
+          onClick={() => setActiveTab('supermercado')}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'supermercado' ? 'text-despensa-accent font-bold' : 'text-gray-400'}`}
+        >
+          <ShoppingCart className="w-5 h-5" />
+          <span className="text-[10px]">Super</span>
+        </button>
 
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+        <button
+          onClick={() => setActiveTab('inicio')}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'inicio' ? 'text-despensa-primary font-bold' : 'text-gray-400'}`}
+        >
+          <Box className="w-5 h-5" />
+          <span className="text-[10px]">Inventario</span>
+        </button>
+
+        <button
+          onClick={() => { limpiarFormulario(); setActiveTab('agregar'); }}
+          className="bg-despensa-primary text-white p-3 rounded-full shadow-lg -mt-6 hover:scale-105 transition"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+
+        <button
+          onClick={() => setActiveTab('favoritos')}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'favoritos' ? 'text-yellow-500 font-bold' : 'text-gray-400'}`}
+        >
+          <Star className="w-5 h-5" />
+          <span className="text-[10px]">Favoritos</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('cuadricula')}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'cuadricula' ? 'text-despensa-primary font-bold' : 'text-gray-400'}`}
+        >
+          <Grid className="w-5 h-5" />
+          <span className="text-[10px]">Cuadrícula</span>
+        </button>
+      </nav>
     </main>
   );
 }
