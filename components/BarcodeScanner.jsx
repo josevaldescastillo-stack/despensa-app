@@ -1,49 +1,81 @@
 'use client';
 
-import { useEffect } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 
 export default function BarcodeScanner({ onScanSuccess, onClose }) {
+  const videoRef = useRef(null);
+
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner(
-      "reader",
-      { 
-        fps: 10, 
-        qrbox: { width: 250, height: 150 },
-        aspectRatio: 1.0
-      },
-      false
-    );
+    let stream = null;
 
-    scanner.render(
-      (decodedText) => {
-        scanner.clear();
-        onScanSuccess(decodedText);
-      },
-      (error) => {
-        // Ignorar errores continuos de escaneo
+    const startCamera = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+
+        // Detección nativa de códigos si el navegador lo soporta (BarcodeDetector API)
+        if ('BarcodeDetector' in window) {
+          const barcodeDetector = new window.BarcodeDetector();
+          const detectCode = async () => {
+            if (videoRef.current && videoRef.current.readyState === 4) {
+              try {
+                const barcodes = await barcodeDetector.detect(videoRef.current);
+                if (barcodes.length > 0) {
+                  onScanSuccess(barcodes[0].rawValue);
+                  stopCamera();
+                  return;
+                }
+              } catch (e) {
+                console.error(e);
+              }
+            }
+            requestAnimationFrame(detectCode);
+          };
+          detectCode();
+        }
+      } catch (err) {
+        alert('No se pudo acceder a la cámara. Asegúrate de dar los permisos correspondientes.');
+        onClose();
       }
-    );
-
-    return () => {
-      scanner.clear().catch(error => console.error("Error al cerrar escáner:", error));
     };
-  }, [onScanSuccess]);
+
+    const stopCamera = () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+
+    startCamera();
+
+    return () => stopCamera();
+  }, [onScanSuccess, onClose]);
 
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-4 w-full max-w-sm text-center shadow-xl relative">
-        <h3 className="font-bold text-despensa-text mb-2 text-base">Escanear Código de Barras</h3>
-        <p className="text-xs text-despensa-subtext mb-4">Apunta la cámara al código del producto</p>
-        
-        <div id="reader" className="w-full rounded-2xl overflow-hidden border border-despensa-primary/30"></div>
-
-        <button 
+      <div className="relative w-full max-w-sm bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/20">
+        <button
           onClick={onClose}
-          className="mt-4 w-full bg-red-500 text-white font-bold py-2.5 rounded-full text-xs transition hover:bg-red-600"
+          className="absolute top-4 right-4 z-10 bg-white/20 text-white p-2 rounded-full backdrop-blur-md"
         >
-          Cancelar Escaneo
+          <X className="w-6 h-6" />
         </button>
+
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className="w-full h-80 object-cover"
+        />
+
+        <div className="p-4 text-center bg-gray-900 text-white text-xs">
+          <p className="font-semibold">Apunta el código de barras o QR</p>
+          <p className="text-gray-400 text-[10px] mt-1">Se detectará automáticamente</p>
+        </div>
       </div>
     </div>
   );
