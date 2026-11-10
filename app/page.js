@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2 } from 'lucide-react';
+import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, X } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import AuthModal from '@/components/AuthModal';
 import BarcodeScanner from '@/components/BarcodeScanner';
@@ -18,6 +18,10 @@ export default function HomePage() {
   const [modoEscaner, setModoEscaner] = useState('buscar');
 
   const [mostrarAuthModal, setMostrarAuthModal] = useState(true);
+
+  // Estados para la Lista de Supermercado y Menú Desplegable
+  const [mostrarMenuDesplegable, setMostrarMenuDesplegable] = useState(false);
+  const [listaCompras, setListaCompras] = useState([]);
 
   // Formulario
   const [nombre, setNombre] = useState('');
@@ -84,6 +88,36 @@ export default function HomePage() {
     }
   };
 
+  // Función para generar la Lista de Supermercado desde los productos actuales
+  const generarListaSuper = () => {
+    const productosLista = productos.map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      precio: p.precio || 0,
+      comprado: false,
+      cantidad: 1,
+    }));
+    setListaCompras(productosLista);
+    setActiveTab('supermercado');
+    setMostrarMenuDesplegable(false);
+  };
+
+  // Marcar como comprado y ordenar al final
+  const toggleComprado = (id) => {
+    setListaCompras((prev) => {
+      const actualizada = prev.map((item) =>
+        item.id === id ? { ...item, comprado: !item.comprado } : item
+      );
+      return actualizada.sort((a, b) => Number(a.comprado) - Number(b.comprado));
+    });
+  };
+
+  // Calcular total de la lista de supermercado
+  const totalEstimado = listaCompras.reduce(
+    (acc, item) => acc + (item.comprado ? 0 : item.precio * item.cantidad),
+    0
+  );
+
   // Función para compartir por WhatsApp
   const compartirPorWhatsApp = () => {
     const mensaje = encodeURIComponent(
@@ -140,12 +174,10 @@ export default function HomePage() {
         <AuthModal 
           onLoginSuccess={(codigoAsignado) => {
             setCodigoDespensa(codigoAsignado);
-            setMostrarAuthModal(false); // Cierra el modal y deja entrar a la app con su código
+            setMostrarAuthModal(false);
           }} 
         />
       )}
-
-      {/* Encabezado, Buscador y resto de la app... */}
 
       {/* Modal de Cámara */}
       {mostrarEscaner && (
@@ -156,10 +188,32 @@ export default function HomePage() {
       )}
 
       {/* Encabezado */}
-      <header className="flex justify-between items-center mb-4 px-2">
-        <button className="p-2 text-despensa-primary hover:bg-black/5 rounded-full">
+      <header className="flex justify-between items-center mb-4 px-2 relative">
+        <button 
+          onClick={() => setMostrarMenuDesplegable(!mostrarMenuDesplegable)}
+          className="p-2 text-despensa-primary hover:bg-black/5 rounded-full relative"
+        >
           <Menu className="w-7 h-7" />
         </button>
+
+        {/* Menú desplegable superior */}
+        {mostrarMenuDesplegable && (
+          <div className="absolute top-12 left-2 bg-white rounded-2xl shadow-xl border border-despensa-primary/20 p-2 z-50 w-56 space-y-1">
+            <button
+              onClick={generarListaSuper}
+              className="w-full text-left px-3 py-2 text-xs font-bold text-despensa-text hover:bg-despensa-bg rounded-xl flex items-center gap-2"
+            >
+              <ShoppingCart className="w-4 h-4 text-despensa-primary" /> Lista de Supermercado
+            </button>
+            <button
+              onClick={() => { setActiveTab('reportes'); setMostrarMenuDesplegable(false); }}
+              className="w-full text-left px-3 py-2 text-xs font-bold text-despensa-text hover:bg-despensa-bg rounded-xl flex items-center gap-2"
+            >
+              <FileText className="w-4 h-4 text-despensa-primary" /> Reportes y PDF
+            </button>
+          </div>
+        )}
+
         <div className="text-center flex flex-col items-center">
           <div className="flex items-center gap-1">
             <span className="text-despensa-text font-bold text-xs">Despensa: </span>
@@ -182,26 +236,28 @@ export default function HomePage() {
         </button>
       </header>
 
-      {/* Buscador con Botón de Cámara */}
-      <div className="relative mb-4 flex gap-2">
-        <div className="relative flex-1">
-          <input
-            type="text"
-            placeholder="Buscar producto..."
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            className="w-full bg-white border border-despensa-primary/30 rounded-full py-2.5 pl-12 pr-4 text-despensa-text placeholder-despensa-subtext focus:outline-none focus:ring-2 focus:ring-despensa-primary shadow-sm text-sm"
-          />
-          <Search className="w-5 h-5 text-despensa-primary absolute left-4 top-3" />
+      {/* Buscador con Botón de Cámara (Solo visible en inicio) */}
+      {activeTab === 'inicio' && (
+        <div className="relative mb-4 flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              placeholder="Buscar producto..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              className="w-full bg-white border border-despensa-primary/30 rounded-full py-2.5 pl-12 pr-4 text-despensa-text placeholder-despensa-subtext focus:outline-none focus:ring-2 focus:ring-despensa-primary shadow-sm text-sm"
+            />
+            <Search className="w-5 h-5 text-despensa-primary absolute left-4 top-3" />
+          </div>
+          <button 
+            onClick={() => { setModoEscaner('buscar'); setMostrarEscaner(true); }}
+            className="bg-despensa-primary text-white p-2.5 rounded-full shadow-sm hover:opacity-90 transition flex items-center justify-center"
+            title="Escanear Código de Barras"
+          >
+            <Camera className="w-5 h-5" />
+          </button>
         </div>
-        <button 
-          onClick={() => { setModoEscaner('buscar'); setMostrarEscaner(true); }}
-          className="bg-despensa-primary text-white p-2.5 rounded-full shadow-sm hover:opacity-90 transition flex items-center justify-center"
-          title="Escanear Código de Barras"
-        >
-          <Camera className="w-5 h-5" />
-        </button>
-      </div>
+      )}
 
       {/* Título */}
       <div className="text-center mb-4">
@@ -209,6 +265,7 @@ export default function HomePage() {
           {activeTab === 'inicio' && 'Inventario en Tiempo Real'}
           {activeTab === 'agregar' && 'Nuevo Producto'}
           {activeTab === 'reportes' && 'Reportes Financieros y PDF'}
+          {activeTab === 'supermercado' && 'Lista de Supermercado'}
         </h1>
       </div>
 
@@ -355,7 +412,66 @@ export default function HomePage() {
         </form>
       )}
 
-      {/* VISTA 3: REPORTES & PDF */}
+      {/* VISTA 3: LISTA DE SUPERMERCADO */}
+      {activeTab === 'supermercado' && (
+        <div className="space-y-4 pb-10">
+          <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-despensa-primary/20">
+            <div>
+              <h2 className="text-sm font-bold text-despensa-text">Tu Compra Digital</h2>
+              <p className="text-xs text-despensa-subtext">
+                {listaCompras.filter(i => i.comprado).length} de {listaCompras.length} comprados
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] text-gray-500 block uppercase font-bold">Total Estimado</span>
+              <span className="text-base font-extrabold text-[#d8492e]">${totalEstimado.toLocaleString('es-CL')}</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {listaCompras.length === 0 ? (
+              <p className="text-center text-despensa-subtext text-sm py-10">
+                Abre el menú superior (☰) y haz clic en "Lista de Supermercado" para generarla.
+              </p>
+            ) : (
+              listaCompras.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => toggleComprado(item.id)}
+                  className={`flex items-center justify-between p-3.5 rounded-2xl cursor-pointer transition border ${
+                    item.comprado
+                      ? 'bg-gray-100/80 border-gray-200 text-gray-400 line-through'
+                      : 'bg-white border-despensa-primary/10 text-despensa-text shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-5 h-5 rounded flex items-center justify-center border ${item.comprado ? 'bg-despensa-primary border-despensa-primary text-white' : 'border-gray-400'}`}>
+                      {item.comprado && <Check className="w-3.5 h-3.5" />}
+                    </div>
+                    <span className="font-semibold text-sm">{item.nombre}</span>
+                  </div>
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <span className="text-xs font-medium text-despensa-subtext">$</span>
+                    <input
+                      type="number"
+                      value={item.precio}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        setListaCompras((prev) =>
+                          prev.map((i) => (i.id === item.id ? { ...i, precio: val } : i))
+                        );
+                      }}
+                      className="w-20 p-1 text-right text-xs border rounded-lg bg-gray-50 outline-none focus:ring-1 focus:ring-despensa-primary"
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* VISTA 4: REPORTES & PDF */}
       {activeTab === 'reportes' && (
         <div className="bg-white p-6 rounded-3xl shadow-sm text-center space-y-4 border border-despensa-primary/20">
           <FileText className="w-16 h-16 text-despensa-primary mx-auto" />
@@ -379,6 +495,15 @@ export default function HomePage() {
           </button>
         </div>
       )}
+
+      {/* Botón Flotante para Agregar Producto rápidamente */}
+      <button
+        onClick={() => setActiveTab('agregar')}
+        className="fixed bottom-24 right-6 bg-despensa-primary text-white p-4 rounded-full shadow-2xl hover:opacity-90 transition flex items-center justify-center z-40"
+        aria-label="Agregar Producto"
+      >
+        <Plus className="w-6 h-6" />
+      </button>
 
       {/* Menú Inferior */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
