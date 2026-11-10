@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, DollarSign } from 'lucide-react';
+import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, DollarSign, LogOut } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import AuthModal from '@/components/AuthModal';
 import BarcodeScanner from '@/components/BarcodeScanner';
@@ -13,11 +13,11 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState('inicio'); 
   const [busqueda, setBusqueda] = useState('');
   const [productos, setProductos] = useState([]);
-  const [codigoDespensa, setCodigoDespensa] = useState('CASA-123');
+  const [codigoDespensa, setCodigoDespensa] = useState('');
   const [mostrarEscaner, setMostrarEscaner] = useState(false);
   const [modoEscaner, setModoEscaner] = useState('buscar');
 
-  // Autenticación obligatoria inicializada en true hasta verificar sesión
+  // Control de autenticación
   const [mostrarAuthModal, setMostrarAuthModal] = useState(true);
   const [mostrarMenuDesplegable, setMostrarMenuDesplegable] = useState(false);
 
@@ -44,38 +44,71 @@ export default function HomePage() {
   const [nuevoCantidadDistinto, setNuevoCantidadDistinto] = useState('1');
   const [nuevoPrecioDistinto, setNuevoPrecioDistinto] = useState('');
 
-  // 1. PERSISTENCIA Y GESTIÓN DE SESIÓN
+  // 1. VERIFICACIÓN Y CONTROL DE SESIÓN
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const verificarSesion = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         setMostrarAuthModal(false);
       } else {
         setMostrarAuthModal(true);
       }
-    });
+    };
+
+    verificarSesion();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
         setMostrarAuthModal(false);
       } else {
         setMostrarAuthModal(true);
+        setProductos([]);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  const handleCerrarSesion = async () => {
+    if (confirm('¿Deseas cerrar tu sesión actual?')) {
+      await supabase.auth.signOut();
+      setCodigoDespensa('');
+      setMostrarAuthModal(true);
+    }
+  };
+
   useEffect(() => {
     if (codigoDespensa) fetchProductos();
   }, [codigoDespensa]);
 
+  // Consulta de productos compatible con despensa_codigo o despensa_id
   const fetchProductos = async () => {
-    const { data, error } = await supabase
+    if (!codigoDespensa) return;
+
+    // Primero intenta buscar por código directo
+    let { data, error } = await supabase
       .from('productos')
       .select('*')
       .eq('despensa_codigo', codigoDespensa);
 
-    if (!error) setProductos(data || []);
+    // Si no trae nada o la columna no existía, busca mediante el ID de la despensa
+    if (error || !data || data.length === 0) {
+      const { data: despensa } = await supabase
+        .from('despensas')
+        .select('id')
+        .eq('codigo', codigoDespensa)
+        .maybeSingle();
+
+      if (despensa?.id) {
+        const { data: prods } = await supabase
+          .from('productos')
+          .select('*')
+          .eq('despensa_id', despensa.id);
+        data = prods;
+      }
+    }
+
+    setProductos(data || []);
   };
 
   useEffect(() => {
@@ -109,9 +142,17 @@ export default function HomePage() {
     return 'normal';
   };
 
+  // Guardar producto asegurando vincularlo a Supabase correctamente
   const handleGuardarProducto = async (e) => {
     e.preventDefault();
     if (!nombre || !cantidad || !precio) return alert('Completa los campos obligatorios');
+
+    // Buscar ID interno de la despensa para evitar fallos de RLS o llaves foráneas
+    const { data: despensa } = await supabase
+      .from('despensas')
+      .select('id')
+      .eq('codigo', codigoDespensa)
+      .maybeSingle();
 
     const productoData = {
       nombre,
@@ -123,17 +164,27 @@ export default function HomePage() {
       vencimiento: vencimiento || null,
       codigo_barras: codigoBarras || null,
       despensa_codigo: codigoDespensa,
+      ...(despensa?.id ? { despensa_id: despensa.id } : {})
     };
 
+    let errorGuardado = null;
+
     if (editandoId) {
-      await supabase.from('productos').update(productoData).eq('id', editandoId);
+      const { error } = await supabase.from('productos').update(productoData).eq('id', editandoId);
+      errorGuardado = error;
     } else {
-      await supabase.from('productos').insert([productoData]);
+      const { error } = await supabase.from('productos').insert([productoData]);
+      errorGuardado = error;
     }
 
-    limpiarFormulario();
-    fetchProductos();
-    setActiveTab('inicio');
+    if (errorGuardado) {
+      alert('Error al guardar en Supabase: ' + errorGuardado.message);
+    } else {
+      alert('¡Producto guardado exitosamente!');
+      limpiarFormulario();
+      await fetchProductos();
+      setActiveTab('inicio');
+    }
   };
 
   const prepararEdicion = (prod) => {
@@ -204,7 +255,7 @@ export default function HomePage() {
   return (
     <main className={`w-full min-h-screen pb-32 pt-4 px-3 flex flex-col font-sans transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-[#f5e8d9] text-[#3f5228]'}`}>
       
-      {/* MODAL DE AUTENTICACIÓN Y CÓDIGO DE DESPENSA */}
+      {/* MODAL DE AUTENTICACIÓN */}
       {mostrarAuthModal && (
         <AuthModal 
           onLoginSuccess={(codigoAsignado) => {
@@ -236,7 +287,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Código de Despensa Editable y Compartible */}
+        {/* Código de Despensa */}
         <div className="text-center flex flex-col items-center">
           <div className="flex items-center gap-1">
             <span className="font-bold text-xs">Despensa: </span>
@@ -248,8 +299,12 @@ export default function HomePage() {
           <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-yellow-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`} title="Cambiar Tema">
             {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
-          <button onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`¡Únete a nuestra despensa compartida en la app! Ingresa con este código: *${codigoDespensa}*`)}`, '_blank')} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-green-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`} title="Compartir por WhatsApp">
+          <button onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`¡Únete a nuestra despensa compartida! Ingresa con este código: *${codigoDespensa}*`)}`, '_blank')} className={`p-2 rounded-full border ${darkMode ? 'border-gray-700 text-green-400 hover:bg-gray-800' : 'border-[#3f5228]/30 text-[#3f5228] hover:bg-black/5'}`} title="Compartir por WhatsApp">
             <Share2 className="w-5 h-5" />
+          </button>
+          
+          <button onClick={handleCerrarSesion} className="p-2 rounded-full border border-red-500/30 text-red-500 hover:bg-red-500/10" title="Cerrar Sesión">
+            <LogOut className="w-5 h-5" />
           </button>
         </div>
       </header>
