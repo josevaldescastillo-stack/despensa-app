@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Camera, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, DollarSign, LogOut } from 'lucide-react';
+import { Search, Menu, User, Plus, Trash2, FileText, AlertTriangle, Mic, Share2, ShoppingCart, Check, Edit2, Minus, Star, Grid, Box, ListPlus, Moon, Sun, DollarSign, LogOut } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import AuthModal from '@/components/AuthModal';
-import BarcodeScanner from '@/components/BarcodeScanner';
+import VoiceScanner from '@/components/VoiceScanner';
 import { supabase } from '@/lib/supabaseClient';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -14,8 +14,7 @@ export default function HomePage() {
   const [busqueda, setBusqueda] = useState('');
   const [productos, setProductos] = useState([]);
   const [codigoDespensa, setCodigoDespensa] = useState('');
-  const [mostrarEscaner, setMostrarEscaner] = useState(false);
-  const [modoEscaner, setModoEscaner] = useState('buscar');
+  const [mostrarVoz, setMostrarVoz] = useState(false);
 
   // Control de autenticación
   const [mostrarAuthModal, setMostrarAuthModal] = useState(true);
@@ -81,17 +80,14 @@ export default function HomePage() {
     if (codigoDespensa) fetchProductos();
   }, [codigoDespensa]);
 
-  // Consulta de productos compatible con despensa_codigo o despensa_id
   const fetchProductos = async () => {
     if (!codigoDespensa) return;
 
-    // Primero intenta buscar por código directo
     let { data, error } = await supabase
       .from('productos')
       .select('*')
       .eq('despensa_codigo', codigoDespensa);
 
-    // Si no trae nada o la columna no existía, busca mediante el ID de la despensa
     if (error || !data || data.length === 0) {
       const { data: despensa } = await supabase
         .from('despensas')
@@ -109,6 +105,33 @@ export default function HomePage() {
     }
 
     setProductos(data || []);
+  };
+
+  // Lógica de Procesamiento de Comando de Voz
+  const handleVoiceCommand = async (transcript) => {
+    setMostrarVoz(false);
+    const texto = transcript.toLowerCase();
+
+    // Extraer números si existen en la frase
+    const numerosEncontrados = texto.match(/\d+/g);
+    const cantidadCambio = numerosEncontrados ? parseFloat(numerosEncontrados[0]) : 1;
+
+    // Buscar si la frase contiene "agregar", "sumar" o "descontar", "gaste", "quitar"
+    const esDescuento = texto.includes('descontar') || texto.includes('gasté') || texto.includes('gaste') || texto.includes('quitar') || texto.includes('menos');
+    const esSuma = texto.includes('agregar') || texto.includes('sumar') || texto.includes('compré') || texto.includes('compre') || texto.includes('más') || texto.includes('mas');
+
+    // Buscar coincidencia de nombre con algún producto del inventario
+    const productoCoincidente = productos.find(p => texto.includes(p.nombre.toLowerCase()));
+
+    if (productoCoincidente) {
+      const delta = esDescuento ? -cantidadCambio : cantidadCambio;
+      await cambiarStock(productoCoincidente.id, productoCoincidente.cantidad, delta);
+      alert(`¡Actualizado! ${productoCoincidente.nombre}: ${delta > 0 ? '+' : ''}${delta} unidades.`);
+    } else {
+      // Si no encuentra producto exacto, lo coloca en el buscador o rellena el formulario
+      setBusqueda(transcript);
+      if (activeTab === 'agregar') setNombre(transcript);
+    }
   };
 
   useEffect(() => {
@@ -142,12 +165,10 @@ export default function HomePage() {
     return 'normal';
   };
 
-  // Guardar producto asegurando vincularlo a Supabase correctamente
   const handleGuardarProducto = async (e) => {
     e.preventDefault();
     if (!nombre || !cantidad || !precio) return alert('Completa los campos obligatorios');
 
-    // Buscar ID interno de la despensa para evitar fallos de RLS o llaves foráneas
     const { data: despensa } = await supabase
       .from('despensas')
       .select('id')
@@ -265,7 +286,13 @@ export default function HomePage() {
         />
       )}
 
-      {mostrarEscaner && <BarcodeScanner onScanSuccess={(code) => { setCodigoBarras(code); setMostrarEscaner(false); setActiveTab('agregar'); }} onClose={() => setMostrarEscaner(false)} />}
+      {/* MODAL ASISTENTE DE VOZ */}
+      {mostrarVoz && (
+        <VoiceScanner 
+          onVoiceResult={handleVoiceCommand} 
+          onClose={() => setMostrarVoz(false)} 
+        />
+      )}
 
       {/* Encabezado */}
       <header className="flex justify-between items-center mb-4 px-1 relative">
@@ -309,15 +336,15 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* Buscador */}
+      {/* Buscador con Botón de Voz */}
       {activeTab === 'inicio' && (
         <div className="relative mb-4 flex gap-2">
           <div className="relative flex-1">
             <input type="text" placeholder="Buscar producto..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className={`w-full border rounded-full py-2.5 pl-12 pr-4 text-sm shadow-sm outline-none ${darkMode ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-400' : 'bg-white border-[#3f5228]/30 text-[#3f5228]'}`} />
             <Search className="w-5 h-5 text-green-600 absolute left-4 top-3" />
           </div>
-          <button onClick={() => { setModoEscaner('buscar'); setMostrarEscaner(true); }} className="bg-[#3f5228] text-white p-2.5 rounded-full shadow-sm hover:opacity-90">
-            <Camera className="w-5 h-5" />
+          <button onClick={() => setMostrarVoz(true)} className="bg-[#3f5228] text-white p-2.5 rounded-full shadow-sm hover:opacity-90 flex items-center justify-center" title="Dictar por Voz">
+            <Mic className="w-5 h-5" />
           </button>
         </div>
       )}
@@ -522,15 +549,13 @@ export default function HomePage() {
       {activeTab === 'agregar' && (
         <form onSubmit={handleGuardarProducto} className={`p-5 rounded-3xl shadow-sm space-y-3 border flex-1 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-[#3f5228]/20'}`}>
           <div>
-            <label className="text-xs font-bold">Nombre del Producto</label>
-            <input type="text" placeholder="Ej. Leche Entera 1L" value={nombre} onChange={(e) => setNombre(e.target.value)} className={`w-full border rounded-xl p-2.5 text-sm outline-none mt-1 ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`} required />
-          </div>
-          <div>
             <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-bold">Código de Barras</label>
-              <button type="button" onClick={() => { setModoEscaner('vincular'); setMostrarEscaner(true); }} className="text-xs text-green-600 font-semibold flex items-center gap-1 hover:underline"><Camera className="w-3.5 h-3.5" /> Escanear</button>
+              <label className="text-xs font-bold">Nombre del Producto</label>
+              <button type="button" onClick={() => setMostrarVoz(true)} className="text-xs text-green-600 font-semibold flex items-center gap-1 hover:underline">
+                <Mic className="w-3.5 h-3.5" /> Dictar Nombre
+              </button>
             </div>
-            <input type="text" placeholder="Código detectado" value={codigoBarras} onChange={(e) => setCodigoBarras(e.target.value)} className={`w-full border rounded-xl p-2 text-xs outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-gray-50 border-gray-200'}`} />
+            <input type="text" placeholder="Ej. Leche Entera 1L" value={nombre} onChange={(e) => setNombre(e.target.value)} className={`w-full border rounded-xl p-2.5 text-sm outline-none mt-1 ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`} required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
